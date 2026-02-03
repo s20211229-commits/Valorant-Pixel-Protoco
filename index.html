@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>VALORANT: Pixel Protocol</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Teko:wght@400;600;700&display=swap');
+
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #0f1923; 
+            touch-action: none; 
+            font-family: 'Teko', sans-serif;
+            user-select: none;
+        }
+        
+        canvas { 
+            display: block; 
+            image-rendering: pixelated; 
+        }
+
+        .val-font { font-family: 'Teko', sans-serif; text-transform: uppercase; }
+        
+        .val-btn {
+            background-color: #ff4655;
+            color: white;
+            border: none;
+            clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .val-btn:hover { background-color: #d93644; transform: translateY(-2px); }
+        .val-btn:active { transform: translateY(0); }
+        .val-btn:disabled { background-color: #555; cursor: not-allowed; }
+
+        .agent-card {
+            border: 1px solid #ffffff30;
+            transition: all 0.2s;
+            cursor: pointer;
+            background: linear-gradient(135deg, #ffffff10 0%, transparent 100%);
+            position: relative;
+            overflow: hidden;
+        }
+        .agent-card:hover { border-color: #ff4655; background: #ffffff15; }
+        .agent-card.selected {
+            border-color: #ff4655;
+            background: linear-gradient(135deg, #ff465520 0%, transparent 100%);
+            box-shadow: 0 0 15px #ff465540;
+        }
+
+        .skill-cooldown {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background-color: rgba(0,0,0,0.7);
+            transition: height 0.1s linear;
+        }
+
+        @keyframes floatUp {
+            0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
+            20% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+            100% { transform: translate(-50%, -80%) scale(1); opacity: 0; }
+        }
+        .kill-banner {
+            position: absolute;
+            pointer-events: none;
+            animation: floatUp 0.8s ease-out forwards;
+            font-weight: bold;
+            text-shadow: 2px 2px 0 #000;
+            color: #ff4655;
+            font-size: 2rem;
+            white-space: nowrap;
+            z-index: 20;
+        }
+
+        .pause-icon-btn {
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.3);
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .pause-icon-btn:hover { background: rgba(255,255,255,0.1); border-color: white; }
+
+        .agent-grid::-webkit-scrollbar { width: 8px; }
+        .agent-grid::-webkit-scrollbar-track { background: #0f1923; }
+        .agent-grid::-webkit-scrollbar-thumb { background: #ff4655; border-radius: 4px; }
+    </style>
+</head>
+<body class="text-white">
+
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- HUD -->
+    <div id="hud" class="absolute inset-0 pointer-events-none hidden">
+        <div class="absolute top-4 w-full px-8 flex justify-between items-start pointer-events-auto">
+            <div class="w-10"></div>
+            <div class="flex gap-12 items-end">
+                <div class="text-center">
+                    <div class="text-xs text-gray-400 tracking-widest val-font">KILLS</div>
+                    <div class="text-4xl font-bold val-font" id="score-display">0</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-xs text-gray-400 tracking-widest val-font">WAVE</div>
+                    <div class="text-4xl font-bold text-red-500 val-font" id="wave-display">1</div>
+                </div>
+            </div>
+            <button id="pause-btn" class="pause-icon-btn" onclick="togglePause()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+            </button>
+        </div>
+
+        <div class="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-6 pointer-events-auto">
+            <div class="flex flex-col items-end mr-4">
+                <div class="text-2xl font-bold val-font mb-1"><span id="hp-text">100</span> <span class="text-xs text-gray-400">HP</span></div>
+                <div class="w-48 h-2 bg-gray-700 skew-x-[-20deg]">
+                    <div id="hp-bar" class="h-full bg-teal-400 w-full transition-all duration-100"></div>
+                </div>
+            </div>
+            <div class="flex gap-4">
+                <div class="relative group">
+                    <div class="w-12 h-12 border border-white/30 bg-black/40 flex items-center justify-center relative overflow-hidden">
+                        <div id="cd-skill1" class="skill-cooldown h-0"></div>
+                        <span class="font-bold text-xl">E</span>
+                    </div>
+                    <div class="absolute -top-6 left-0 w-full text-center text-[10px] text-gray-300 val-font" id="name-skill1">ABILITY</div>
+                </div>
+                <div class="relative group">
+                    <div class="w-14 h-14 border-2 border-white/50 bg-black/40 flex items-center justify-center relative overflow-hidden" id="ult-box">
+                        <div id="cd-ult" class="skill-cooldown h-full"></div>
+                        <span class="font-bold text-2xl text-yellow-400">X</span>
+                    </div>
+                    <div class="absolute -top-6 left-0 w-full text-center text-[10px] text-yellow-400 val-font font-bold" id="name-ult">ULTIMATE</div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="ult-ready-msg" class="absolute top-1/3 left-1/2 -translate-x-1/2 text-yellow-400 text-3xl font-bold val-font tracking-widest hidden animate-pulse pointer-events-none">
+            ULTIMATE READY [Press Q]
+        </div>
+        
+        <div id="phoenix-timer" class="absolute top-20 left-1/2 -translate-x-1/2 text-orange-400 text-xl font-bold val-font hidden">
+            RUN IT BACK: <span id="phoenix-time">0.0</span>s
+        </div>
+    </div>
+
+    <!-- Pause Menu -->
+    <div id="pause-screen" class="absolute inset-0 bg-[#0f1923]/90 flex flex-col items-center justify-center z-50 hidden backdrop-blur-sm">
+        <h2 class="text-6xl font-bold text-white mb-8 val-font tracking-widest">PAUSED</h2>
+        <div class="flex flex-col gap-4 w-64">
+            <button onclick="togglePause()" class="val-btn px-8 py-3 text-xl font-bold val-font">RESUME</button>
+            <button onclick="location.reload()" class="border border-white/30 hover:bg-white/10 text-white px-8 py-3 text-xl font-bold val-font transition-all">QUIT MATCH</button>
+        </div>
+    </div>
+
+    <!-- Character Selection -->
+    <div id="menu-screen" class="absolute inset-0 bg-[#0f1923] flex flex-col items-center justify-center z-50">
+        <h1 class="text-6xl md:text-7xl font-bold text-white mb-2 val-font tracking-tighter">VALORANT <span class="text-[#ff4655]">PIXEL</span></h1>
+        <p class="text-gray-400 val-font tracking-[0.3em] mb-8 text-sm">SELECT AGENT</p>
+
+        <div id="agent-grid" class="agent-grid grid grid-cols-3 gap-4 mb-8 max-h-[60vh] overflow-y-auto p-4 w-full max-w-4xl justify-items-center">
+            <!-- Agents here -->
+        </div>
+
+        <button id="start-btn" class="val-btn px-12 py-4 text-2xl font-bold val-font tracking-widest" disabled onclick="startGame()">
+            LOCKED
+        </button>
+        <div class="mt-4 text-[10px] text-gray-500 val-font tracking-wider">
+            WASD: MOVE | MOUSE: AIM | L-CLICK: SHOOT | R-CLICK / E: ABILITY | Q / X: ULTIMATE
+        </div>
+    </div>
+
+    <!-- Game Over -->
+    <div id="game-over-screen" class="absolute inset-0 bg-[#0f1923]/95 flex flex-col items-center justify-center z-50 hidden">
+        <h2 class="text-8xl font-bold text-[#ff4655] val-font mb-2">DEFEAT</h2>
+        <div class="w-full max-w-md h-[1px] bg-white/20 mb-8"></div>
+        <p class="text-2xl text-white val-font mb-8">KILLS: <span id="final-score" class="text-teal-400">0</span></p>
+        <button onclick="location.reload()" class="val-btn px-10 py-3 text-xl font-bold val-font">PLAY AGAIN</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let GAME_WIDTH = window.innerWidth;
+        let GAME_HEIGHT = window.innerHeight;
+
+        const AGENTS = {
+            jett: {
+                name: "JETT", role: "DUELIST", color: "#a5f3fc",
+                hp: 100, speed: 5.5, damage: 50, fireRate: 15,
+                skillName: "TAILWIND", ultName: "BLADE STORM",
+                skillCd: 120, ultPoints: 7,
+                desc: "High mobility, deadly precision."
+            },
+            brim: {
+                name: "BRIMSTONE", role: "CONTROLLER", color: "#fdba74",
+                hp: 100, speed: 3.5, damage: 15, fireRate: 5,
+                skillName: "INCENDIARY", ultName: "ORBITAL STRIKE",
+                skillCd: 300, ultPoints: 7,
+                desc: "Area denial and heavy fire."
+            },
+            reyna: {
+                name: "REYNA", role: "DUELIST", color: "#d8b4fe",
+                hp: 100, speed: 4, damage: 35, fireRate: 8,
+                skillName: "DISMISS", ultName: "EMPRESS",
+                skillCd: 240, ultPoints: 6,
+                desc: "Feast on kills, sustain."
+            },
+            raze: {
+                name: "RAZE", role: "DUELIST", color: "#f97316",
+                hp: 100, speed: 4, damage: 25, fireRate: 8,
+                skillName: "PAINT SHELLS", ultName: "SHOWSTOPPER",
+                skillCd: 300, ultPoints: 8,
+                desc: "Explosives expert."
+            },
+            killjoy: {
+                name: "KILLJOY", role: "SENTINEL", color: "#fde047",
+                hp: 100, speed: 3.5, damage: 20, fireRate: 10,
+                skillName: "TURRET", ultName: "LOCKDOWN",
+                skillCd: 400, ultPoints: 8,
+                desc: "Deploys defensive bots."
+            },
+            sova: {
+                name: "SOVA", role: "INITIATOR", color: "#60a5fa",
+                hp: 100, speed: 3.8, damage: 45, fireRate: 12,
+                skillName: "SHOCK BOLT", ultName: "HUNTER'S FURY",
+                skillCd: 240, ultPoints: 7,
+                desc: "Shocks enemies and wall hacks."
+            },
+            sage: {
+                name: "SAGE", role: "SENTINEL", color: "#6ee7b7",
+                hp: 100, speed: 3.8, damage: 30, fireRate: 10,
+                skillName: "BARRIER ORB", ultName: "RESURRECTION",
+                skillCd: 400, ultPoints: 8,
+                desc: "Revive allies (CPU) and walls."
+            },
+            phoenix: {
+                name: "PHOENIX", role: "DUELIST", color: "#fdba74",
+                hp: 100, speed: 4, damage: 30, fireRate: 9,
+                skillName: "HOT HANDS", ultName: "RUN IT BACK",
+                skillCd: 300, ultPoints: 6,
+                desc: "Fire healing and respawn."
+            },
+            omen: {
+                name: "OMEN", role: "CONTROLLER", color: "#6366f1",
+                hp: 100, speed: 4, damage: 35, fireRate: 10,
+                skillName: "SHROUDED STEP", ultName: "FROM THE SHADOWS",
+                skillCd: 200, ultPoints: 7,
+                desc: "Teleportation and stealth."
+            }
+        };
+
+        const agentGrid = document.getElementById('agent-grid');
+        
+        Object.keys(AGENTS).forEach(key => {
+            const data = AGENTS[key];
+            const card = document.createElement('div');
+            card.className = "agent-card p-4 w-48 flex flex-col items-center text-center";
+            card.onclick = () => selectAgent(key, card);
+            
+            card.innerHTML = `
+                <div class="w-16 h-16 mb-2 pixelated relative" style="background-color: ${data.color}">
+                    <div class="absolute top-0 right-0 w-full h-full bg-black/10"></div>
+                    <div class="absolute top-2 left-2 w-4 h-4 bg-white/80"></div>
+                </div>
+                <h3 class="text-xl font-bold val-font">${data.name}</h3>
+                <div class="text-[10px] text-gray-400 val-font mb-2">${data.role}</div>
+                <div class="text-[10px] text-gray-300 font-mono w-full text-left">
+                    <p><span class="text-[#ff4655]">E</span> ${data.skillName}</p>
+                    <p><span class="text-yellow-400">Q</span> ${data.ultName}</p>
+                </div>
+            `;
+            agentGrid.appendChild(card);
+        });
+
+        let gameState = 'MENU';
+        let agentType = null;
+        let score = 0;
+        let wave = 1;
+        let frameCount = 0;
+        let ultPoints = 0;
+        let player;
+        
+        let bullets = [];
+        let enemies = [];
+        let particles = [];
+        let projectiles = [];
+        let aoes = [];
+        let structures = [];
+        let allies = [];
+        let screenShake = 0;
+
+        const keys = { w: false, a: false, s: false, d: false, q: false, e: false };
+        const mouse = { x: 0, y: 0, left: false, right: false };
+
+        window.addEventListener('resize', () => {
+            GAME_WIDTH = window.innerWidth;
+            GAME_HEIGHT = window.innerHeight;
+            canvas.width = GAME_WIDTH;
+            canvas.height = GAME_HEIGHT;
+            ctx.imageSmoothingEnabled = false;
+        });
+        window.dispatchEvent(new Event('resize'));
+
+        window.addEventListener('keydown', e => { 
+            if(e.key.toLowerCase() === 'escape') togglePause();
+            if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = true; 
+        });
+        window.addEventListener('keyup', e => {
+            if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false;
+        });
+        window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+        window.addEventListener('mousedown', e => { 
+            if(gameState !== 'PLAYING') return;
+            if(e.button === 0) mouse.left = true; 
+            if(e.button === 2) mouse.right = true; 
+        });
+        window.addEventListener('mouseup', e => { if(e.button === 0) mouse.left = false; if(e.button === 2) mouse.right = false; });
+        window.addEventListener('contextmenu', e => e.preventDefault());
+
+        class Entity {
+            constructor(x, y, size, color) {
+                this.x = x; this.y = y; this.size = size; this.color = color;
+                this.dead = false;
+            }
+            drawRect(ctx, x, y, w, h, col) {
+                ctx.fillStyle = col || this.color;
+                ctx.fillRect(Math.floor(x), Math.floor(y), w, h);
+            }
+        }
+
+        class Player extends Entity {
+            constructor(type) {
+                const stats = AGENTS[type];
+                super(GAME_WIDTH/2, GAME_HEIGHT/2, 20, stats.color);
+                Object.assign(this, stats);
+                this.maxHp = this.hp;
+                this.skillCdMax = stats.skillCd;
+                this.skillTimer = 0;
+                this.lastShot = 0;
+                this.invincible = 0;
+                this.ultActive = false;
+                this.ultTimer = 0;
+                this.anchorPos = null; 
+            }
+
+            update() {
+                let dx = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+                let dy = (keys.s ? 1 : 0) - (keys.w ? 1 : 0);
+                if (dx || dy) {
+                    const len = Math.hypot(dx, dy);
+                    this.x += (dx/len) * this.speed;
+                    this.y += (dy/len) * this.speed;
+                }
+
+                this.x = Math.max(this.size, Math.min(GAME_WIDTH-this.size, this.x));
+                this.y = Math.max(this.size, Math.min(GAME_HEIGHT-this.size, this.y));
+                
+                this.angle = Math.atan2(mouse.y - this.y, mouse.x - this.x);
+
+                if (this.skillTimer > 0) this.skillTimer--;
+                if (this.invincible > 0) this.invincible--;
+                if (this.ultTimer > 0) {
+                    this.ultTimer--;
+                    if (this.ultTimer <= 0) this.endUlt();
+                }
+
+                if (mouse.left && frameCount - this.lastShot > this.fireRate) this.shoot();
+                if ((mouse.right || keys.e) && this.skillTimer <= 0) this.useSkill();
+                if (keys.q && ultPoints >= this.ultPoints && !this.ultActive) {
+                    if (agentType === 'sage' && allies.length >= 3) {
+                    } else {
+                        this.useUlt();
+                    }
+                }
+            }
+
+            shoot() {
+                this.lastShot = frameCount;
+                let dmg = this.damage;
+                let color = '#ffff00';
+                
+                if (this.ultActive && agentType === 'jett') { dmg = 100; color = '#00ffff'; }
+                if (this.ultActive && agentType === 'reyna') { dmg *= 1.2; }
+
+                bullets.push(new Bullet(this.x, this.y, this.angle, 20, dmg, color));
+                screenShake = 2;
+            }
+
+            useSkill() {
+                this.skillTimer = this.skillCdMax;
+                
+                switch(agentType) {
+                    case 'jett':
+                        this.x += Math.cos(this.angle) * 200;
+                        this.y += Math.sin(this.angle) * 200;
+                        this.invincible = 15;
+                        createParticles(this.x, this.y, 10, '#fff');
+                        break;
+                    case 'brim':
+                    case 'phoenix':
+                    case 'viper':
+                        projectiles.push(new Molotov(this.x, this.y, this.angle, agentType));
+                        break;
+                    case 'reyna':
+                        this.invincible = 60;
+                        break;
+                    case 'raze':
+                        projectiles.push(new Grenade(this.x, this.y, this.angle));
+                        break;
+                    case 'killjoy':
+                        structures.push(new Turret(this.x, this.y));
+                        break;
+                    case 'sova':
+                        projectiles.push(new ShockBolt(this.x, this.y, this.angle));
+                        break;
+                    case 'sage':
+                        structures.push(new Wall(mouse.x, mouse.y, Math.PI / 2));
+                        break;
+                    case 'omen':
+                        this.x = mouse.x;
+                        this.y = mouse.y;
+                        createParticles(this.x, this.y, 10, '#6366f1');
+                        break;
+                }
+            }
+
+            useUlt() {
+                ultPoints = 0;
+                updateHUD();
+                
+                switch(agentType) {
+                    case 'jett':
+                    case 'reyna':
+                        this.ultActive = true;
+                        this.ultTimer = 600; 
+                        break;
+                    case 'brim':
+                        aoes.push(new OrbitalStrike(mouse.x, mouse.y));
+                        break;
+                    case 'raze':
+                        projectiles.push(new Rocket(this.x, this.y, this.angle));
+                        break;
+                    case 'killjoy':
+                        structures.push(new Lockdown(this.x, this.y));
+                        break;
+                    case 'sova':
+                        aoes.push(new HuntersFury(this.x, this.y, this.angle));
+                        break;
+                    case 'sage':
+                        // Spawn RANDOM Ally Agent
+                        if (allies.length < 3) {
+                            const keys = Object.keys(AGENTS);
+                            const randomKey = keys[Math.floor(Math.random() * keys.length)];
+                            allies.push(new Ally(mouse.x, mouse.y, randomKey));
+                            aoes.push(new Shockwave(mouse.x, mouse.y, 100));
+                        }
+                        break;
+                    case 'phoenix':
+                        this.anchorPos = {x: this.x, y: this.y, hp: this.hp};
+                        this.ultActive = true;
+                        this.ultTimer = 600;
+                        this.hp = this.maxHp;
+                        document.getElementById('phoenix-timer').style.display = 'block';
+                        break;
+                    case 'omen':
+                        this.x = mouse.x;
+                        this.y = mouse.y;
+                        aoes.push(new Shockwave(this.x, this.y, 200)); 
+                        break;
+                }
+            }
+
+            endUlt() {
+                this.ultActive = false;
+                if (agentType === 'phoenix' && this.anchorPos) {
+                    this.x = this.anchorPos.x;
+                    this.y = this.anchorPos.y;
+                    this.hp = this.anchorPos.hp;
+                    this.anchorPos = null;
+                    document.getElementById('phoenix-timer').style.display = 'none';
+                    createParticles(this.x, this.y, 20, '#fdba74');
+                }
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                if (this.invincible > 0) ctx.globalAlpha = 0.5;
+                ctx.rotate(this.angle);
+                this.drawRect(ctx, -12, -12, 24, 24, this.ultActive && agentType==='reyna' ? '#ef4444' : this.color);
+                this.drawRect(ctx, 10, 2, 16, 6, '#333');
+                if (agentType === 'jett' && this.ultActive) {
+                    ctx.fillStyle = '#00ffff';
+                    ctx.fillRect(0, -20, 4, 10);
+                    ctx.fillRect(10, -15, 4, 10);
+                    ctx.fillRect(-10, -15, 4, 10);
+                }
+                ctx.restore();
+            }
+
+            takeDamage(amt) {
+                if (this.invincible > 0) return;
+                this.hp -= amt;
+                screenShake = 5;
+                if (this.hp <= 0) {
+                    if (agentType === 'phoenix' && this.ultActive) {
+                        this.endUlt();
+                    } else {
+                        gameState = 'GAMEOVER';
+                        document.getElementById('game-over-screen').style.display = 'flex';
+                        document.getElementById('final-score').innerText = score;
+                    }
+                }
+                updateHUD();
+            }
+        }
+
+        class Ally extends Entity {
+            constructor(x, y, type) {
+                const stats = AGENTS[type || 'sage']; // Default to sage color if undefined
+                super(x, y, 20, stats.color);
+                this.hp = 100;
+                this.maxHp = 100;
+                this.speed = 3;
+                this.fireRate = stats.fireRate * 1.5; // AI slightly slower fire rate
+                this.lastShot = 0;
+                this.type = type;
+            }
+
+            update() {
+                // 1. Follow Player if far
+                let dist = Math.hypot(player.x - this.x, player.y - this.y);
+                if (dist > 150) {
+                    let angle = Math.atan2(player.y - this.y, player.x - this.x);
+                    this.x += Math.cos(angle) * this.speed;
+                    this.y += Math.sin(angle) * this.speed;
+                }
+
+                // 2. Shoot Enemies
+                let target = null;
+                let minDist = 400; 
+                for(let e of enemies) {
+                    let d = Math.hypot(e.x - this.x, e.y - this.y);
+                    if(d < minDist) {
+                        minDist = d;
+                        target = e;
+                    }
+                }
+
+                if (target && frameCount - this.lastShot > this.fireRate) {
+                    this.lastShot = frameCount;
+                    let angle = Math.atan2(target.y - this.y, target.x - this.x);
+                    bullets.push(new Bullet(this.x, this.y, angle, 15, 20, this.color));
+                }
+            }
+            
+            draw(ctx) {
+                this.drawRect(ctx, -10, -10, 20, 20, this.color);
+                // Halo for revived ally
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(Math.floor(this.x)-12, Math.floor(this.y)-12, 24, 24);
+                
+                // Gun visual
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                // Aim visual (static forward for simplicity or toward target in future)
+                this.drawRect(ctx, 10, 2, 10, 4, '#333'); 
+                ctx.restore();
+
+                // Hp bar
+                ctx.fillStyle = 'red'; ctx.fillRect(Math.floor(this.x)-10, Math.floor(this.y)-18, 20, 3);
+                ctx.fillStyle = '#00ff00'; ctx.fillRect(Math.floor(this.x)-10, Math.floor(this.y)-18, 20 * (this.hp/this.maxHp), 3);
+            }
+            
+            takeDamage(amt) {
+                this.hp -= amt;
+                if(this.hp <= 0) this.dead = true;
+            }
+        }
+
+        class Enemy extends Entity {
+            constructor() {
+                let x, y;
+                if(Math.random()<0.5) { x = Math.random()<0.5?-30:GAME_WIDTH+30; y=Math.random()*GAME_HEIGHT; }
+                else { x = Math.random()*GAME_WIDTH; y=Math.random()<0.5?-30:GAME_HEIGHT+30; }
+                super(x, y, 15, '#ff4655');
+                this.hp = 40 + (wave * 5);
+                this.maxHp = this.hp;
+                // Cap enemy speed to prevent them from becoming impossible to outrun
+                this.speed = Math.min(3.5, 1.2 + (wave * 0.04));
+                this.frozen = 0;
+            }
+            update() {
+                if (this.frozen > 0) {
+                    this.frozen--;
+                    return;
+                }
+                
+                let target = player;
+                let minDist = Math.hypot(player.x - this.x, player.y - this.y);
+
+                let turret = structures.find(s => s.type === 'turret' && !s.dead && Math.hypot(s.x-this.x, s.y-this.y) < 300);
+                if (turret) { 
+                    let d = Math.hypot(turret.x-this.x, turret.y-this.y);
+                    if (d < minDist) { target = turret; minDist = d; }
+                }
+
+                for(let ally of allies) {
+                    let d = Math.hypot(ally.x - this.x, ally.y - this.y);
+                    if (d < minDist && d < 400) {
+                        target = ally;
+                        minDist = d;
+                    }
+                }
+
+                const angle = Math.atan2(target.y - this.y, target.x - this.x);
+                let vx = Math.cos(angle) * this.speed;
+                let vy = Math.sin(angle) * this.speed;
+
+                structures.forEach(s => {
+                    if (s.type === 'wall' && !s.dead) {
+                        let dx = this.x - s.x;
+                        let dy = this.y - s.y;
+                        let dist = Math.hypot(dx, dy);
+                        if (dist < 40) {
+                            this.x += dx/dist * 2;
+                            this.y += dy/dist * 2;
+                            vx = 0; vy = 0;
+                        }
+                    }
+                });
+
+                this.x += vx;
+                this.y += vy;
+
+                if (Math.hypot(target.x - this.x, target.y - this.y) < this.size + 10) {
+                    target.takeDamage(1);
+                }
+            }
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                if (this.frozen > 0) ctx.fillStyle = '#00ffff';
+                else ctx.fillStyle = this.color;
+                ctx.fillRect(-10, -10, 20, 20);
+                ctx.fillStyle = 'red'; ctx.fillRect(-10, -15, 20, 3);
+                ctx.fillStyle = '#00ff00'; ctx.fillRect(-10, -15, 20 * (this.hp/this.maxHp), 3);
+                ctx.restore();
+            }
+        }
+
+        class Bullet extends Entity {
+            constructor(x, y, angle, speed, dmg, color) {
+                super(x, y, 4, color);
+                this.vx = Math.cos(angle) * speed;
+                this.vy = Math.sin(angle) * speed;
+                this.dmg = dmg;
+            }
+            update() {
+                this.x += this.vx; this.y += this.vy;
+                if (this.x<0||this.x>GAME_WIDTH||this.y<0||this.y>GAME_HEIGHT) this.dead=true;
+            }
+            draw(ctx) { this.drawRect(ctx, this.x-2, this.y-2, 4, 4, this.color); }
+        }
+
+        // --- Skills ---
+
+        class Molotov extends Entity {
+            constructor(x, y, angle, type) {
+                super(x, y, 6, 'orange');
+                this.targetX = x + Math.cos(angle) * 250;
+                this.targetY = y + Math.sin(angle) * 250;
+                this.speed = 12;
+                this.type = type;
+            }
+            update() {
+                const dist = Math.hypot(this.targetX-this.x, this.targetY-this.y);
+                if (dist < this.speed) {
+                    this.dead = true;
+                    aoes.push(new Zone(this.targetX, this.targetY, this.type));
+                } else {
+                    const a = Math.atan2(this.targetY-this.y, this.targetX-this.x);
+                    this.x += Math.cos(a)*this.speed; this.y += Math.sin(a)*this.speed;
+                }
+            }
+            draw(ctx) { 
+                ctx.beginPath(); ctx.arc(this.x, this.y, 5, 0, Math.PI*2); 
+                ctx.fillStyle = this.type === 'viper' ? '#00ff00' : '#fdba74'; ctx.fill(); 
+            }
+        }
+
+        class Grenade extends Entity {
+            constructor(x, y, angle) {
+                super(x, y, 6, '#f97316');
+                this.vx = Math.cos(angle) * 10;
+                this.vy = Math.sin(angle) * 10;
+                this.timer = 40;
+            }
+            update() {
+                this.x += this.vx; this.y += this.vy;
+                this.vx *= 0.95; this.vy *= 0.95;
+                this.timer--;
+                if(this.timer <= 0) {
+                    this.dead = true;
+                    for(let i=0; i<4; i++) {
+                        aoes.push(new Explosion(this.x + (Math.random()-0.5)*60, this.y + (Math.random()-0.5)*60, 40));
+                    }
+                }
+            }
+            draw(ctx) { this.drawRect(ctx, this.x-3, this.y-3, 6, 6, this.color); }
+        }
+
+        class Rocket extends Entity {
+            constructor(x, y, angle) {
+                super(x, y, 10, '#f97316');
+                this.vx = Math.cos(angle) * 15;
+                this.vy = Math.sin(angle) * 15;
+            }
+            update() {
+                this.x += this.vx; this.y += this.vy;
+                if(this.x<0||this.x>GAME_WIDTH||this.y<0||this.y>GAME_HEIGHT) {
+                    this.dead=true;
+                    aoes.push(new Explosion(this.x, this.y, 150)); 
+                    screenShake = 20;
+                }
+            }
+            draw(ctx) { this.drawRect(ctx, this.x-5, this.y-5, 10, 10, this.color); }
+        }
+
+        class ShockBolt extends Entity {
+            constructor(x, y, angle) {
+                super(x, y, 6, '#60a5fa');
+                this.vx = Math.cos(angle) * 15;
+                this.vy = Math.sin(angle) * 15;
+            }
+            update() {
+                this.x += this.vx; this.y += this.vy;
+                if(this.x<0||this.x>GAME_WIDTH||this.y<0||this.y>GAME_HEIGHT) {
+                    this.dead=true;
+                    aoes.push(new Explosion(this.x, this.y, 80)); 
+                }
+            }
+            draw(ctx) { this.drawRect(ctx, this.x-3, this.y-3, 6, 6, this.color); }
+        }
+
+        class Zone { 
+            constructor(x, y, type) {
+                this.x = x; this.y = y; this.type = type;
+                this.life = 300; 
+                this.r = 60;
+                this.color = type === 'phoenix' ? '#fdba74' : (type === 'viper' ? '#00ff00' : 'orange');
+            }
+            update() {
+                this.life--; if(this.life<=0) this.dead=true;
+                
+                if (this.type === 'phoenix' && Math.hypot(player.x-this.x, player.y-this.y) < this.r) {
+                    player.hp = Math.min(player.hp+0.5, player.maxHp);
+                }
+
+                if(frameCount%10===0) {
+                    enemies.forEach(e => {
+                        if(Math.hypot(e.x-this.x, e.y-this.y) < this.r) {
+                            e.hp -= 10;
+                            if(e.hp<=0) { e.dead=true; addScore(1); }
+                        }
+                    });
+                }
+            }
+            draw(ctx) {
+                ctx.globalAlpha = 0.4;
+                ctx.fillStyle = this.color;
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        class Explosion {
+            constructor(x, y, r) {
+                this.x=x; this.y=y; this.r=r; this.life=10;
+            }
+            update() {
+                this.life--; if(this.life<=0) this.dead=true;
+                if(this.life===9) { 
+                    enemies.forEach(e => {
+                        if(Math.hypot(e.x-this.x, e.y-this.y) < this.r) {
+                            e.hp -= 100;
+                            if(e.hp<=0) { e.dead=true; addScore(1); }
+                        }
+                    });
+                }
+            }
+            draw(ctx) {
+                ctx.fillStyle = 'orange';
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
+            }
+        }
+
+        class OrbitalStrike {
+            constructor(x, y) {
+                this.x=x; this.y=y; this.r=80; this.timer=60; this.active=120;
+            }
+            update() {
+                if(this.timer>0) this.timer--;
+                else {
+                    this.active--; if(this.active<=0) this.dead=true;
+                    enemies.forEach(e => {
+                        if(Math.hypot(e.x-this.x, e.y-this.y) < this.r) {
+                            e.hp -= 5;
+                            if(e.hp<=0) { e.dead=true; addScore(1); }
+                        }
+                    });
+                }
+            }
+            draw(ctx) {
+                if(this.timer>0) {
+                    ctx.strokeStyle = '#ff4655'; ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.stroke();
+                } else {
+                    ctx.fillStyle = 'rgba(255, 70, 85, 0.8)';
+                    ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
+                    ctx.fillStyle='white'; ctx.fillRect(this.x-5, 0, 10, this.y);
+                }
+            }
+        }
+
+        class HuntersFury {
+            constructor(x, y, angle) {
+                this.x=x; this.y=y; this.angle=angle; this.life=30;
+                const range = 1000;
+                enemies.forEach(e => {
+                    let ex = e.x - x; let ey = e.y - y;
+                    let rx = ex * Math.cos(-angle) - ey * Math.sin(-angle);
+                    let ry = ex * Math.sin(-angle) + ey * Math.cos(-angle);
+                    if (rx > 0 && rx < range && Math.abs(ry) < 40) {
+                        e.hp -= 80;
+                        if(e.hp<=0) { e.dead=true; addScore(1); }
+                    }
+                });
+            }
+            update() { this.life--; if(this.life<=0) this.dead=true; }
+            draw(ctx) {
+                ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle);
+                ctx.fillStyle = 'rgba(96, 165, 250, 0.8)';
+                ctx.fillRect(0, -40, 1000, 80);
+                ctx.restore();
+            }
+        }
+
+        class Shockwave { 
+            constructor(x, y, r) { this.x=x; this.y=y; this.r=r; this.life=20; }
+            update() {
+                this.life--; if(this.life<=0) this.dead=true;
+                if(this.life===19) {
+                    enemies.forEach(e => {
+                        let dist = Math.hypot(e.x-this.x, e.y-this.y);
+                        if(dist < this.r) {
+                            let a = Math.atan2(e.y-this.y, e.x-this.x);
+                            e.x += Math.cos(a)*100; e.y += Math.sin(a)*100;
+                        }
+                    });
+                }
+            }
+            draw(ctx) {
+                ctx.strokeStyle = 'white'; ctx.lineWidth=5;
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.r * (1-this.life/20), 0, Math.PI*2); ctx.stroke();
+            }
+        }
+
+        // --- Structures ---
+        class Turret extends Entity {
+            constructor(x, y) {
+                super(x, y, 15, '#fde047');
+                this.type = 'turret';
+                this.hp = 100;
+                this.cd = 0;
+            }
+            takeDamage(amt) { this.hp-=amt; if(this.hp<=0) this.dead=true; }
+            update() {
+                if(this.cd>0) this.cd--;
+                let target = enemies.reduce((nearest, e) => {
+                    let d = Math.hypot(e.x-this.x, e.y-this.y);
+                    if(d < 300 && (!nearest || d < nearest.dist)) return {e, dist:d};
+                    return nearest;
+                }, null);
+
+                if(target && this.cd<=0) {
+                    this.cd = 10;
+                    let a = Math.atan2(target.e.y-this.y, target.e.x-this.x);
+                    bullets.push(new Bullet(this.x, this.y, a, 15, 10, '#fde047'));
+                }
+            }
+            draw(ctx) {
+                this.drawRect(ctx, this.x-10, this.y-10, 20, 20, this.color);
+            }
+        }
+
+        class Wall extends Entity {
+            constructor(x, y, angle) {
+                super(x, y, 30, '#6ee7b7');
+                this.type = 'wall';
+                this.hp = 400;
+                this.angle = angle;
+                this.life = 600; 
+            }
+            update() { this.life--; if(this.life<=0 || this.hp<=0) this.dead=true; }
+            draw(ctx) {
+                ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle);
+                ctx.fillStyle = this.color;
+                ctx.fillRect(-10, -40, 20, 80); 
+                ctx.restore();
+            }
+            takeDamage(amt) { this.hp-=amt; }
+        }
+
+        class Lockdown extends Entity {
+            constructor(x, y) {
+                super(x, y, 20, '#fde047');
+                this.timer = 300; 
+                this.r = 300;
+            }
+            update() {
+                this.timer--;
+                if(this.timer<=0) {
+                    this.dead=true;
+                    enemies.forEach(e => {
+                        if(Math.hypot(e.x-this.x, e.y-this.y) < this.r) {
+                            e.frozen = 300; 
+                        }
+                    });
+                    aoes.push(new Shockwave(this.x, this.y, this.r));
+                }
+            }
+            draw(ctx) {
+                this.drawRect(ctx, this.x-10, this.y-10, 20, 20, this.color);
+                ctx.strokeStyle = this.color;
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.r * (1-this.timer/300), 0, Math.PI*2); ctx.stroke();
+            }
+            takeDamage(amt) {} 
+        }
+
+        // --- Utils ---
+        function selectAgent(key, element) {
+            agentType = key;
+            document.querySelectorAll('.agent-card').forEach(el => el.classList.remove('selected'));
+            element.classList.add('selected');
+            document.getElementById('start-btn').disabled = false;
+            document.getElementById('start-btn').innerText = "LOCK IN";
+        }
+
+        function startGame() {
+            player = new Player(agentType);
+            document.getElementById('menu-screen').style.display = 'none';
+            document.getElementById('hud').style.display = 'block';
+            
+            document.getElementById('name-skill1').innerText = AGENTS[agentType].skillName;
+            document.getElementById('name-ult').innerText = AGENTS[agentType].ultName;
+            
+            gameState = 'PLAYING';
+            score = 0; wave = 1; ultPoints = 0;
+            bullets=[]; enemies=[]; particles=[]; projectiles=[]; aoes=[]; structures=[]; allies=[];
+            updateHUD();
+            loop();
+        }
+
+        function togglePause() {
+            if(gameState === 'PLAYING') {
+                gameState = 'PAUSED';
+                document.getElementById('pause-screen').style.display = 'flex';
+            } else if(gameState === 'PAUSED') {
+                gameState = 'PLAYING';
+                document.getElementById('pause-screen').style.display = 'none';
+                loop();
+            }
+        }
+
+        function createParticles(x, y, count, color) {
+            for(let i=0; i<count; i++) particles.push({x, y, vx:(Math.random()-.5)*5, vy:(Math.random()-.5)*5, life:20, color});
+        }
+
+        function addScore(pts) {
+            score += pts;
+            if(ultPoints < AGENTS[agentType].ultPoints && !player.ultActive) ultPoints++;
+            updateHUD();
+        }
+
+        function updateHUD() {
+            document.getElementById('score-display').innerText = score;
+            document.getElementById('wave-display').innerText = wave;
+            document.getElementById('hp-text').innerText = Math.ceil(player.hp);
+            document.getElementById('hp-bar').style.width = (player.hp/player.maxHp)*100 + '%';
+            
+            const skillPct = 100 - (player.skillTimer/player.skillCdMax)*100;
+            document.getElementById('cd-skill1').style.height = (100-skillPct) + '%';
+            
+            const req = AGENTS[agentType].ultPoints;
+            if(player.ultActive && agentType !== 'sage') { // Sage ult is instant
+                document.getElementById('cd-ult').style.height = (player.ultTimer/600)*100 + '%';
+                document.getElementById('cd-ult').style.backgroundColor = 'rgba(255,255,0,0.4)';
+            } else {
+                document.getElementById('cd-ult').style.height = (100 - (ultPoints/req)*100) + '%';
+                document.getElementById('cd-ult').style.backgroundColor = 'rgba(0,0,0,0.7)';
+                
+                const readyMsg = document.getElementById('ult-ready-msg');
+                const ultBox = document.getElementById('ult-box');
+                if(ultPoints >= req) {
+                    if (agentType === 'sage' && allies.length >= 3) {
+                        readyMsg.style.display = 'none';
+                        ultBox.style.borderColor = 'rgba(255,255,255,0.5)';
+                    } else {
+                        readyMsg.style.display = 'block';
+                        ultBox.style.borderColor = '#fbbf24';
+                    }
+                } else {
+                    readyMsg.style.display = 'none';
+                    ultBox.style.borderColor = 'rgba(255,255,255,0.5)';
+                }
+            }
+
+            if(agentType === 'phoenix' && player.ultActive) {
+                document.getElementById('phoenix-time').innerText = (player.ultTimer/60).toFixed(1);
+            }
+        }
+
+        function loop() {
+            if(gameState !== 'PLAYING') return;
+            requestAnimationFrame(loop);
+            frameCount++;
+
+            ctx.fillStyle = '#0f1923'; ctx.fillRect(0,0,GAME_WIDTH,GAME_HEIGHT);
+
+            if(screenShake > 0) {
+                ctx.save();
+                ctx.translate((Math.random()-.5)*screenShake, (Math.random()-.5)*screenShake);
+                screenShake *= 0.9;
+                if(screenShake < 0.5) screenShake = 0;
+            }
+
+            ctx.strokeStyle = '#ffffff05';
+            for(let i=0; i<GAME_WIDTH; i+=50) { ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,GAME_HEIGHT); ctx.stroke(); }
+            for(let i=0; i<GAME_HEIGHT; i+=50) { ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(GAME_WIDTH,i); ctx.stroke(); }
+
+            if(frameCount % Math.max(30, 100 - wave*2) === 0) enemies.push(new Enemy());
+            if(frameCount % 600 === 0) wave++;
+
+            [aoes, structures, projectiles, bullets, enemies, allies].forEach(arr => {
+                for(let i=arr.length-1; i>=0; i--) {
+                    arr[i].update();
+                    if(arr[i].dead) arr.splice(i, 1);
+                    else arr[i].draw(ctx);
+                }
+            });
+
+            bullets.forEach(b => {
+                if(b.dead) return;
+                for(let i=0; i<enemies.length; i++) {
+                    let e = enemies[i];
+                    if(e.dead) continue;
+                    if(Math.hypot(b.x - e.x, b.y - e.y) < e.size + 5) {
+                        e.hp -= b.dmg;
+                        b.dead = true;
+                        createParticles(e.x, e.y, 5, '#ff4655');
+                        
+                        const dmgText = document.createElement('div');
+                        dmgText.innerText = Math.round(b.dmg);
+                        dmgText.style.position = 'absolute';
+                        dmgText.style.left = e.x + 'px';
+                        dmgText.style.top = e.y + 'px';
+                        dmgText.style.color = 'white';
+                        dmgText.style.fontSize = '12px';
+                        dmgText.style.pointerEvents = 'none';
+                        document.body.appendChild(dmgText);
+                        setTimeout(() => dmgText.remove(), 500);
+
+                        if(e.hp <= 0) {
+                            e.dead = true;
+                            addScore(1);
+                        }
+                        break; 
+                    }
+                }
+            });
+
+            player.update();
+            player.draw(ctx);
+
+            particles.forEach((p, i) => {
+                p.x+=p.vx; p.y+=p.vy; p.life--;
+                ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 2, 2);
+                if(p.life<=0) particles.splice(i, 1);
+            });
+
+            if(screenShake > 0 || screenShake === 0) ctx.restore();
+            updateHUD();
+        }
+    </script>
+</body>
+</html>
