@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>VALORANT: Pixel Protocol 3D</title>
+    <!-- Fixed Three.js Import: Using specific version 0.160.0 to ensure stability and CapsuleGeometry support -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Teko:wght@400;600;700&display=swap');
+
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #0f1923; 
+            font-family: 'Teko', sans-serif;
+            user-select: none;
+        }
+        
+        /* 3D Canvas 像素化 */
+        #gameCanvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            image-rendering: pixelated; /* 關鍵：像素風格 */
+        }
+
+        .val-font { font-family: 'Teko', sans-serif; text-transform: uppercase; }
+        
+        .val-btn {
+            background-color: #ff4655;
+            color: white;
+            border: none;
+            clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .val-btn:hover { background-color: #d93644; transform: translateY(-2px); }
+        .val-btn:disabled { background-color: #555; cursor: not-allowed; }
+
+        .agent-card {
+            border: 1px solid #ffffff30;
+            transition: all 0.2s;
+            cursor: pointer;
+            background: linear-gradient(135deg, #ffffff10 0%, transparent 100%);
+        }
+        .agent-card:hover { border-color: #ff4655; background: #ffffff15; }
+        .agent-card.selected {
+            border-color: #ff4655;
+            background: linear-gradient(135deg, #ff465520 0%, transparent 100%);
+            box-shadow: 0 0 15px #ff465540;
+        }
+
+        .skill-cooldown {
+            position: absolute; bottom: 0; left: 0; width: 100%;
+            background-color: rgba(0,0,0,0.7); transition: height 0.1s linear;
+        }
+
+        /* 準心 */
+        #crosshair {
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 4px; height: 4px;
+            background-color: #00ff00;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            box-shadow: 0 0 2px black;
+            z-index: 10;
+        }
+        
+        .agent-grid::-webkit-scrollbar { width: 8px; }
+        .agent-grid::-webkit-scrollbar-track { background: #0f1923; }
+        .agent-grid::-webkit-scrollbar-thumb { background: #ff4655; border-radius: 4px; }
+    </style>
+</head>
+<body class="text-white">
+
+    <!-- 準心 -->
+    <div id="crosshair"></div>
+
+    <!-- 3D 畫布 -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- HUD -->
+    <div id="hud" class="absolute inset-0 pointer-events-none hidden">
+        <!-- 頂部資訊 -->
+        <div class="absolute top-4 w-full px-8 flex justify-between items-start">
+            <div class="w-10"></div>
+            <div class="flex gap-12 items-end">
+                <div class="text-center">
+                    <div class="text-xs text-gray-400 tracking-widest val-font">KILLS</div>
+                    <div class="text-4xl font-bold val-font" id="score-display">0</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-xs text-gray-400 tracking-widest val-font">WAVE</div>
+                    <div class="text-4xl font-bold text-red-500 val-font" id="wave-display">1</div>
+                </div>
+            </div>
+            <!-- ESC 提示 -->
+            <div class="text-xs text-gray-500 val-font mt-2">PRESS ESC TO PAUSE</div>
+        </div>
+
+        <!-- 底部狀態列 -->
+        <div class="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-6">
+            <div class="flex flex-col items-end mr-4">
+                <div class="text-2xl font-bold val-font mb-1"><span id="hp-text">100</span> <span class="text-xs text-gray-400">HP</span></div>
+                <div class="w-48 h-2 bg-gray-700 skew-x-[-20deg]">
+                    <div id="hp-bar" class="h-full bg-teal-400 w-full transition-all duration-100"></div>
+                </div>
+            </div>
+            <div class="flex gap-4">
+                <div class="relative group">
+                    <div class="w-12 h-12 border border-white/30 bg-black/40 flex items-center justify-center relative overflow-hidden">
+                        <div id="cd-skill1" class="skill-cooldown h-0"></div>
+                        <span class="font-bold text-xl">E</span>
+                    </div>
+                    <div class="absolute -top-6 left-0 w-full text-center text-[10px] text-gray-300 val-font" id="name-skill1">ABILITY</div>
+                </div>
+                <div class="relative group">
+                    <div class="w-14 h-14 border-2 border-white/50 bg-black/40 flex items-center justify-center relative overflow-hidden" id="ult-box">
+                        <div id="cd-ult" class="skill-cooldown h-full"></div>
+                        <span class="font-bold text-2xl text-yellow-400">Q</span>
+                    </div>
+                    <div class="absolute -top-6 left-0 w-full text-center text-[10px] text-yellow-400 val-font font-bold" id="name-ult">ULTIMATE</div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="ult-ready-msg" class="absolute top-1/3 left-1/2 -translate-x-1/2 text-yellow-400 text-3xl font-bold val-font tracking-widest hidden animate-pulse">
+            ULTIMATE READY [Press Q]
+        </div>
+        
+        <!-- 擊殺反饋 -->
+        <div id="kill-feed" class="absolute top-1/4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 pointer-events-none"></div>
+    </div>
+
+    <!-- 選單 -->
+    <div id="menu-screen" class="absolute inset-0 bg-[#0f1923] flex flex-col items-center justify-center z-50">
+        <h1 class="text-6xl md:text-8xl font-bold text-white mb-2 val-font tracking-tighter">VALORANT <span class="text-[#ff4655]">FPS</span></h1>
+        <p class="text-gray-400 val-font tracking-[0.3em] mb-8 text-sm">PIXEL PROTOCOL 3D</p>
+
+        <div id="agent-grid" class="agent-grid grid grid-cols-3 gap-4 mb-8 max-h-[60vh] overflow-y-auto p-4 w-full max-w-4xl justify-items-center">
+            <!-- Agents Generated by JS -->
+        </div>
+
+        <button id="start-btn" class="val-btn px-12 py-4 text-2xl font-bold val-font tracking-widest" disabled>
+            LOCKED
+        </button>
+        <div class="mt-4 text-[10px] text-gray-500 val-font tracking-wider">
+            WASD: MOVE | MOUSE: AIM | CLICK: SHOOT & LOCK | E: ABILITY | Q: ULTIMATE
+        </div>
+    </div>
+
+    <!-- 暫停/結束 -->
+    <div id="overlay-screen" class="absolute inset-0 bg-[#0f1923]/90 flex flex-col items-center justify-center z-50 hidden backdrop-blur-sm">
+        <h2 id="overlay-title" class="text-6xl font-bold text-white mb-8 val-font tracking-widest">PAUSED</h2>
+        <p id="overlay-subtitle" class="text-xl text-teal-400 val-font mb-8 hidden">SCORE: 0</p>
+        <div class="flex flex-col gap-4 w-64">
+            <button id="resume-btn" class="val-btn px-8 py-3 text-xl font-bold val-font">RESUME</button>
+            <button onclick="location.reload()" class="border border-white/30 hover:bg-white/10 text-white px-8 py-3 text-xl font-bold val-font transition-all">MAIN MENU</button>
+        </div>
+    </div>
+
+    <script>
+        // --- 3D Engine Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+        renderer.setSize(window.innerWidth / 4, window.innerHeight / 4, false); // Low Res for Pixel Effect
+        
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0f1923); // Valorant Dark Blue
+        scene.fog = new THREE.Fog(0x0f1923, 10, 60);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+        dirLight.position.set(10, 20, 10);
+        scene.add(dirLight);
+
+        // --- Game Logic ---
+        const AGENTS = {
+            jett: { name: "JETT", role: "DUELIST", color: 0xa5f3fc, hp: 100, speed: 0.15, skillName: "TAILWIND", ultName: "BLADE STORM", skillCd: 120, ultPoints: 7 },
+            raze: { name: "RAZE", role: "DUELIST", color: 0xf97316, hp: 100, speed: 0.12, skillName: "GRENADE", ultName: "SHOWSTOPPER", skillCd: 300, ultPoints: 8 },
+            sage: { name: "SAGE", role: "SENTINEL", color: 0x6ee7b7, hp: 100, speed: 0.11, skillName: "WALL", ultName: "RESURRECTION", skillCd: 400, ultPoints: 8 },
+            reyna: { name: "REYNA", role: "DUELIST", color: 0xd8b4fe, hp: 100, speed: 0.12, skillName: "DISMISS", ultName: "EMPRESS", skillCd: 240, ultPoints: 6 },
+            sova: { name: "SOVA", role: "INITIATOR", color: 0x60a5fa, hp: 100, speed: 0.11, skillName: "SHOCK BOLT", ultName: "HUNTER'S FURY", skillCd: 240, ultPoints: 7 },
+            brim: { name: "BRIMSTONE", role: "CONTROLLER", color: 0xfdba74, hp: 100, speed: 0.11, skillName: "MOLLY", ultName: "ORBITAL STRIKE", skillCd: 300, ultPoints: 7 },
+            phoenix: { name: "PHOENIX", role: "DUELIST", color: 0xfdba74, hp: 100, speed: 0.12, skillName: "HOT HANDS", ultName: "RUN IT BACK", skillCd: 300, ultPoints: 6 },
+            killjoy: { name: "KILLJOY", role: "SENTINEL", color: 0xfde047, hp: 100, speed: 0.11, skillName: "TURRET", ultName: "LOCKDOWN", skillCd: 400, ultPoints: 8 },
+            omen: { name: "OMEN", role: "CONTROLLER", color: 0x6366f1, hp: 100, speed: 0.12, skillName: "TELEPORT", ultName: "SHADOW STEP", skillCd: 200, ultPoints: 7 }
+        };
+
+        // State
+        let gameState = 'MENU'; // MENU, PLAYING, PAUSED, GAMEOVER
+        let agent = null;
+        let score = 0;
+        let wave = 1;
+        let ultPoints = 0;
+        let player = { hp: 100, maxHp: 100, skillCd: 0, ultActive: false, ultTimer: 0, invincible: 0, anchor: null };
+        let recoil = 0;
+        let shake = 0;
+
+        // Entities
+        const bullets = [];
+        const enemies = [];
+        const particles = [];
+        const worldObjects = []; // Walls, turrets, projectiles
+        const allies = [];
+
+        // Input
+        const keys = { w: false, a: false, s: false, d: false, q: false, e: false, space: false };
+        let pitch = 0;
+        let yaw = 0;
+
+        // --- Map Generation ---
+        const floorGeo = new THREE.PlaneGeometry(100, 100);
+        const floorMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        scene.add(floor);
+
+        // Grid helper
+        const gridHelper = new THREE.GridHelper(100, 50, 0x444444, 0x111111);
+        scene.add(gridHelper);
+
+        // Random Boxes
+        const boxGeo = new THREE.BoxGeometry(2, 2, 2);
+        const boxMat = new THREE.MeshLambertMaterial({ color: 0x374151 });
+        for(let i=0; i<20; i++) {
+            const box = new THREE.Mesh(boxGeo, boxMat);
+            box.position.set((Math.random()-0.5)*80, 1, (Math.random()-0.5)*80);
+            // Ensure box is not too close to spawn (0,0)
+            if(box.position.length() > 10) {
+                scene.add(box);
+                worldObjects.push({ mesh: box, type: 'wall', hp: 999 });
+            }
+        }
+
+        // Weapon Model (Simple Gun)
+        const gunGroup = new THREE.Group();
+        const gunGeo = new THREE.BoxGeometry(0.3, 0.3, 1);
+        const gunMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+        const gunMesh = new THREE.Mesh(gunGeo, gunMat);
+        gunMesh.position.set(0.3, -0.3, -0.5);
+        gunGroup.add(gunMesh);
+        camera.add(gunGroup);
+        scene.add(camera);
+        camera.position.y = 1.6; // Eye level
+
+        // --- Core Functions ---
+
+        function initGame(agentKey) {
+            agent = AGENTS[agentKey];
+            player.hp = agent.hp;
+            player.maxHp = agent.hp;
+            player.skillCd = 0;
+            player.ultActive = false;
+            ultPoints = 0;
+            score = 0;
+            wave = 1;
+            
+            // Reset position
+            camera.position.set(0, 1.6, 0);
+            yaw = 0; pitch = 0;
+            
+            // Clear entities
+            enemies.forEach(e => scene.remove(e.mesh));
+            bullets.forEach(b => scene.remove(b.mesh));
+            allies.forEach(a => scene.remove(a.mesh));
+            
+            // Clear world objects that are NOT static walls
+            for(let i = worldObjects.length - 1; i >= 0; i--) {
+                if(worldObjects[i].type !== 'wall') {
+                    scene.remove(worldObjects[i].mesh);
+                    worldObjects.splice(i, 1);
+                }
+            }
+
+            enemies.length = 0;
+            bullets.length = 0;
+            allies.length = 0;
+            
+            updateHUD();
+            document.getElementById('menu-screen').style.display = 'none';
+            document.getElementById('hud').style.display = 'block';
+            document.getElementById('name-skill1').innerText = agent.skillName;
+            document.getElementById('name-ult').innerText = agent.ultName;
+            
+            gameState = 'PLAYING';
+            lockPointer();
+        }
+
+        function lockPointer() {
+            canvas.requestPointerLock = canvas.requestPointerLock || canvas.mozRequestPointerLock;
+            canvas.requestPointerLock();
+        }
+
+        document.addEventListener('pointerlockchange', () => {
+            if (document.pointerLockElement === canvas) {
+                if(gameState === 'PAUSED') gameState = 'PLAYING';
+            } else {
+                if(gameState === 'PLAYING') pauseGame();
+            }
+        });
+
+        function pauseGame() {
+            gameState = 'PAUSED';
+            document.getElementById('overlay-screen').style.display = 'flex';
+            document.getElementById('overlay-title').innerText = "PAUSED";
+            document.getElementById('resume-btn').style.display = 'block';
+            document.getElementById('resume-btn').onclick = () => {
+                document.getElementById('overlay-screen').style.display = 'none';
+                lockPointer();
+            };
+        }
+
+        function gameOver() {
+            gameState = 'GAMEOVER';
+            document.exitPointerLock();
+            document.getElementById('overlay-screen').style.display = 'flex';
+            document.getElementById('overlay-title').innerText = "DEFEAT";
+            document.getElementById('overlay-subtitle').innerText = "KILLS: " + score;
+            document.getElementById('overlay-subtitle').style.display = 'block';
+            document.getElementById('resume-btn').style.display = 'none';
+        }
+
+        // --- Controls ---
+        document.addEventListener('mousemove', (e) => {
+            if (gameState !== 'PLAYING') return;
+            yaw -= e.movementX * 0.002;
+            pitch -= e.movementY * 0.002;
+            pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
+            camera.rotation.set(pitch, yaw, 0, 'YXZ');
+        });
+
+        document.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (keys.hasOwnProperty(key)) keys[key] = true;
+            if (key === ' ') keys.space = true;
+            
+            if (gameState === 'PLAYING') {
+                if (key === 'e') useSkill();
+                if (key === 'q') useUlt();
+            }
+        });
+        document.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (keys.hasOwnProperty(key)) keys[key] = false;
+            if (key === ' ') keys.space = false;
+        });
+        document.addEventListener('mousedown', (e) => {
+            if (gameState === 'MENU') return; // Handled by buttons
+            if (gameState !== 'PLAYING') { lockPointer(); return; }
+            if (e.button === 0) shoot();
+        });
+
+        // --- Actions ---
+        function shoot() {
+            if(player.ultActive && agent.name === 'REYNA') recoil += 0.2;
+            else recoil += 0.1;
+
+            // Recoil Visual
+            gunMesh.position.z = -0.3; 
+            
+            // Create Bullet
+            const bulletGeo = new THREE.BoxGeometry(0.1, 0.1, 0.5);
+            const bulletMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+            if (player.ultActive && agent.name === 'JETT') bulletMat.color.setHex(0x00ffff);
+
+            const bullet = new THREE.Mesh(bulletGeo, bulletMat);
+            bullet.position.copy(camera.position);
+            bullet.quaternion.copy(camera.quaternion);
+            bullet.translateY(-0.2); // Align with gun height
+            
+            // Accuracy spread
+            if (agent.name !== 'JETT' || !player.ultActive) {
+                bullet.rotation.x += (Math.random()-0.5) * 0.05;
+                bullet.rotation.y += (Math.random()-0.5) * 0.05;
+            }
+
+            scene.add(bullet);
+            bullets.push({ mesh: bullet, life: 100, dmg: (player.ultActive && agent.name === 'REYNA') ? 40 : 25 });
+            
+            if (player.ultActive && agent.name === 'JETT') bullets[bullets.length-1].dmg = 150; // Jett Knives
+        }
+
+        function useSkill() {
+            if (player.skillCd > 0) return;
+            player.skillCd = agent.skillCd;
+
+            // Skill Logic
+            if (agent.name === 'SAGE') {
+                // Spawn Wall
+                const wallGeo = new THREE.BoxGeometry(4, 3, 1);
+                const wallMat = new THREE.MeshLambertMaterial({ color: 0x6ee7b7, transparent: true, opacity: 0.8 });
+                const wall = new THREE.Mesh(wallGeo, wallMat);
+                
+                // Position in front of player
+                const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+                wall.position.copy(camera.position).add(dir.multiplyScalar(5));
+                wall.position.y = 1.5;
+                wall.rotation.y = yaw;
+                
+                scene.add(wall);
+                worldObjects.push({ mesh: wall, type: 'sage_wall', hp: 500, life: 600 });
+            } 
+            else if (agent.name === 'JETT') {
+                // Dash
+                const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+                if (keys.w) dir.set(0,0,-1).applyQuaternion(camera.quaternion);
+                else if (keys.s) dir.set(0,0,1).applyQuaternion(camera.quaternion);
+                else if (keys.a) dir.set(-1,0,0).applyQuaternion(camera.quaternion);
+                else if (keys.d) dir.set(1,0,0).applyQuaternion(camera.quaternion);
+                
+                camera.position.add(dir.multiplyScalar(10));
+                player.invincible = 20;
+            }
+            else if (agent.name === 'RAZE' || agent.name === 'BRIMSTONE' || agent.name === 'PHOENIX') {
+                // Grenade / Molly projectile
+                const sphereGeo = new THREE.SphereGeometry(0.3);
+                const color = agent.name === 'RAZE' ? 0xf97316 : (agent.name === 'PHOENIX' ? 0xfdba74 : 0xff4400);
+                const sphereMat = new THREE.MeshBasicMaterial({ color: color });
+                const proj = new THREE.Mesh(sphereGeo, sphereMat);
+                proj.position.copy(camera.position);
+                
+                const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+                
+                scene.add(proj);
+                worldObjects.push({ 
+                    mesh: proj, type: 'projectile', velocity: dir.multiplyScalar(0.8), 
+                    gravity: true, agent: agent.name 
+                });
+            }
+            else if (agent.name === 'KILLJOY') {
+                // Turret
+                const tGeo = new THREE.BoxGeometry(1, 1.5, 1);
+                const tMat = new THREE.MeshLambertMaterial({ color: 0xfde047 });
+                const turret = new THREE.Mesh(tGeo, tMat);
+                turret.position.copy(camera.position);
+                turret.position.y = 0.75;
+                scene.add(turret);
+                worldObjects.push({ mesh: turret, type: 'turret', hp: 100, cd: 0 });
+            }
+            else if (agent.name === 'OMEN') {
+                // Teleport forward
+                const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+                camera.position.add(dir.multiplyScalar(15));
+            }
+            else if (agent.name === 'REYNA') {
+                player.invincible = 120; // Dismiss
+            }
+        }
+
+        function useUlt() {
+            if (ultPoints < agent.ultPoints && !player.ultActive) return;
+            // Sage condition
+            if (agent.name === 'SAGE' && allies.length >= 3) return;
+
+            ultPoints = 0;
+            updateHUD();
+
+            if (agent.name === 'JETT' || agent.name === 'REYNA') {
+                player.ultActive = true;
+                player.ultTimer = 600;
+            }
+            else if (agent.name === 'RAZE') {
+                // Rocket
+                const rGeo = new THREE.CylinderGeometry(0.3, 0.3, 1);
+                const rMat = new THREE.MeshBasicMaterial({ color: 0xf97316 });
+                const rocket = new THREE.Mesh(rGeo, rMat);
+                rocket.position.copy(camera.position);
+                rocket.quaternion.copy(camera.quaternion);
+                rocket.rotateX(Math.PI/2);
+                
+                const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+                
+                scene.add(rocket);
+                worldObjects.push({ mesh: rocket, type: 'rocket', velocity: dir.multiplyScalar(1.0), gravity: false });
+            }
+            else if (agent.name === 'BRIMSTONE' || agent.name === 'SOVA') {
+                // Big AOE in front
+                const pos = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).multiplyScalar(15).add(camera.position);
+                spawnExplosion(pos, 20, 500); // Massive dmg
+            }
+            else if (agent.name === 'PHOENIX') {
+                player.anchor = camera.position.clone();
+                player.ultActive = true;
+                player.ultTimer = 600;
+                player.hp = player.maxHp;
+            }
+            else if (agent.name === 'SAGE') {
+                // Revive Ally
+                const allyGeo = new THREE.CapsuleGeometry(0.5, 1.5, 4, 8);
+                const allyMat = new THREE.MeshLambertMaterial({ color: 0x6ee7b7 });
+                const allyMesh = new THREE.Mesh(allyGeo, allyMat);
+                
+                const spawnPos = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).multiplyScalar(3).add(camera.position);
+                allyMesh.position.copy(spawnPos);
+                allyMesh.position.y = 1;
+                
+                scene.add(allyMesh);
+                allies.push({ mesh: allyMesh, hp: 100, cd: 0 });
+            }
+        }
+
+        function endUlt() {
+            player.ultActive = false;
+            if (agent.name === 'PHOENIX' && player.anchor) {
+                camera.position.copy(player.anchor);
+                player.hp = player.maxHp;
+                player.anchor = null;
+            }
+        }
+
+        // --- Game Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            if (gameState !== 'PLAYING') return;
+
+            // Recoil Recovery
+            if (recoil > 0) recoil *= 0.9;
+            gunMesh.position.z += (-0.5 - gunMesh.position.z) * 0.2;
+            gunMesh.position.y = -0.3 + Math.sin(Date.now() * 0.01) * 0.01; // Idle sway
+
+            // Player Movement
+            if (agent) {
+                const dir = new THREE.Vector3();
+                if (keys.w) dir.z -= 1;
+                if (keys.s) dir.z += 1;
+                if (keys.a) dir.x -= 1;
+                if (keys.d) dir.x += 1;
+                
+                if (dir.length() > 0) {
+                    dir.normalize().applyAxisAngle(new THREE.Vector3(0,1,0), yaw);
+                    const speed = agent.speed * (player.ultActive && agent.name === 'REYNA' ? 1.3 : 1.0);
+                    camera.position.add(dir.multiplyScalar(speed));
+                }
+                
+                // Jump (Basic)
+                if (keys.space && camera.position.y <= 1.7) {
+                    camera.position.y += 0.5;
+                }
+                // Gravity
+                if (camera.position.y > 1.6) camera.position.y -= 0.05;
+                else camera.position.y = 1.6;
+                
+                // Bounds
+                camera.position.x = Math.max(-49, Math.min(49, camera.position.x));
+                camera.position.z = Math.max(-49, Math.min(49, camera.position.z));
+            }
+
+            // Skill Timers
+            if (player.skillCd > 0) player.skillCd--;
+            if (player.invincible > 0) player.invincible--;
+            if (player.ultTimer > 0) {
+                player.ultTimer--;
+                if (player.ultTimer <= 0) endUlt();
+            }
+
+            // Update Bullets
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const b = bullets[i];
+                b.mesh.position.add(new THREE.Vector3(0, 0, -1).applyQuaternion(b.mesh.quaternion).multiplyScalar(1.5)); // High speed
+                b.life--;
+                
+                // Collision with World
+                // Simplified: Check distance to walls/floor
+                if (b.mesh.position.y < 0 || b.life <= 0) {
+                    scene.remove(b.mesh);
+                    bullets.splice(i, 1);
+                    continue;
+                }
+
+                // Hit Enemy
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    const e = enemies[j];
+                    if (b.mesh.position.distanceTo(e.mesh.position) < 1.0) {
+                        // Hit
+                        const isHeadshot = b.mesh.position.y > 1.5;
+                        const finalDmg = b.dmg * (isHeadshot ? 2 : 1);
+                        e.hp -= finalDmg;
+                        
+                        // Hit marker effect
+                        spawnExplosion(b.mesh.position, 0.5, 0, 0xff0000);
+                        
+                        scene.remove(b.mesh);
+                        bullets.splice(i, 1);
+                        
+                        if (e.hp <= 0) {
+                            killEnemy(e, j);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Update Enemies
+            // Spawning
+            if (Math.random() < (0.01 + wave * 0.002)) spawnEnemy();
+            if (score > wave * 10) wave++;
+
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const e = enemies[i];
+                // Move towards player or ally
+                let targetPos = camera.position;
+                let minDist = e.mesh.position.distanceTo(camera.position);
+
+                // Check Allies/Turrets
+                worldObjects.forEach(obj => {
+                    if (obj.type === 'turret') {
+                        const d = e.mesh.position.distanceTo(obj.mesh.position);
+                        if (d < minDist) { minDist = d; targetPos = obj.mesh.position; }
+                    }
+                });
+                allies.forEach(ally => {
+                    const d = e.mesh.position.distanceTo(ally.mesh.position);
+                    if (d < minDist) { minDist = d; targetPos = ally.mesh.position; }
+                });
+
+                const dir = new THREE.Vector3().subVectors(targetPos, e.mesh.position).normalize();
+                dir.y = 0; // Stay on ground
+                e.mesh.position.add(dir.multiplyScalar(0.08 + wave * 0.005)); // Slow speed
+                e.mesh.lookAt(targetPos);
+
+                // Collision with player
+                if (e.mesh.position.distanceTo(camera.position) < 1.0) {
+                    if (player.invincible <= 0) {
+                        player.hp -= 1;
+                        shake = 5;
+                        updateHUD();
+                        if (player.hp <= 0) {
+                            if (player.ultActive && agent.name === 'PHOENIX') endUlt();
+                            else gameOver();
+                        }
+                    }
+                }
+            }
+
+            // Update World Objects (Skills)
+            for (let i = worldObjects.length - 1; i >= 0; i--) {
+                const obj = worldObjects[i];
+                if (obj.type === 'projectile' || obj.type === 'rocket') {
+                    obj.mesh.position.add(obj.velocity);
+                    if (obj.gravity) obj.velocity.y -= 0.02; // Gravity
+                    
+                    // Collision Floor
+                    if (obj.mesh.position.y <= 0) {
+                        // Explode
+                        const range = obj.type === 'rocket' ? 15 : 8;
+                        const dmg = obj.type === 'rocket' ? 150 : 50;
+                        spawnExplosion(obj.mesh.position, range/2, 0, 0xffa500);
+                        
+                        // Area Damage
+                        enemies.forEach((e, idx) => {
+                            if (e.mesh.position.distanceTo(obj.mesh.position) < range) {
+                                e.hp -= dmg;
+                                if(e.hp <= 0) killEnemy(e, idx);
+                            }
+                        });
+
+                        scene.remove(obj.mesh);
+                        worldObjects.splice(i, 1);
+                    }
+                }
+                else if (obj.type === 'sage_wall') {
+                    obj.life--;
+                    if (obj.life <= 0) {
+                        scene.remove(obj.mesh);
+                        worldObjects.splice(i, 1);
+                    }
+                }
+                else if (obj.type === 'turret') {
+                    obj.cd--;
+                    if (obj.cd <= 0) {
+                        // Find target
+                        const target = enemies[0]; // Simple logic
+                        if (target && target.mesh.position.distanceTo(obj.mesh.position) < 20) {
+                            obj.cd = 30;
+                            // Shoot visual
+                            const tBullet = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.1,0.5), new THREE.MeshBasicMaterial({color: 0xffff00}));
+                            tBullet.position.copy(obj.mesh.position);
+                            tBullet.lookAt(target.mesh.position);
+                            scene.add(tBullet);
+                            // Instant hit logic for simplicity
+                            target.hp -= 10;
+                            setTimeout(()=>scene.remove(tBullet), 100);
+                        }
+                    }
+                }
+            }
+
+            // Update Allies
+            for (let i = allies.length - 1; i >= 0; i--) {
+                const a = allies[i];
+                // Follow player
+                if (a.mesh.position.distanceTo(camera.position) > 5) {
+                    const dir = new THREE.Vector3().subVectors(camera.position, a.mesh.position).normalize();
+                    a.mesh.position.add(dir.multiplyScalar(0.1));
+                }
+                a.mesh.lookAt(camera.position); // Look at player
+                
+                // Shoot enemies
+                a.cd--;
+                if (a.cd <= 0) {
+                    const target = enemies.reduce((prev, curr) => {
+                        const d = curr.mesh.position.distanceTo(a.mesh.position);
+                        return (d < 15 && (!prev || d < prev.dist)) ? {e:curr, dist:d} : prev;
+                    }, null);
+                    
+                    if (target) {
+                        a.cd = 20;
+                        const bGeo = new THREE.BoxGeometry(0.1,0.1,0.5);
+                        const bMesh = new THREE.Mesh(bGeo, new THREE.MeshBasicMaterial({color:0x6ee7b7}));
+                        bMesh.position.copy(a.mesh.position);
+                        bMesh.lookAt(target.e.mesh.position);
+                        scene.add(bMesh);
+                        // Visual only bullet that travels
+                        bullets.push({mesh: bMesh, life: 20, dmg: 20}); // Ally bullets
+                    }
+                }
+            }
+
+            // Shake
+            if (shake > 0) {
+                camera.position.x += (Math.random()-0.5)*0.1;
+                camera.position.y += (Math.random()-0.5)*0.1;
+                shake--;
+            }
+
+            updateHUD();
+            renderer.render(scene, camera);
+        }
+
+        function spawnEnemy() {
+            const geo = new THREE.CapsuleGeometry(0.5, 1, 4, 8);
+            const mat = new THREE.MeshLambertMaterial({ color: 0xff4655 });
+            const mesh = new THREE.Mesh(geo, mat);
+            
+            // Spawn far away
+            const angle = Math.random() * Math.PI * 2;
+            const dist = 30 + Math.random() * 20;
+            mesh.position.set(camera.position.x + Math.cos(angle)*dist, 1, camera.position.z + Math.sin(angle)*dist);
+            
+            scene.add(mesh);
+            enemies.push({ mesh: mesh, hp: 50 + wave * 10 });
+        }
+
+        function killEnemy(e, index) {
+            scene.remove(e.mesh);
+            enemies.splice(index, 1); // remove only one element at index
+            score++;
+            if (ultPoints < agent.ultPoints && !player.ultActive) ultPoints++;
+            
+            if (agent.name === 'REYNA' && player.ultActive) {
+                player.hp = Math.min(player.hp + 20, player.maxHp); // Heal
+            }
+
+            // Feed
+            const feed = document.getElementById('kill-feed');
+            const item = document.createElement('div');
+            item.className = 'text-red-500 font-bold val-font text-2xl';
+            item.innerText = "ELIMINATED";
+            feed.appendChild(item);
+            setTimeout(() => item.remove(), 1000);
+        }
+
+        function spawnExplosion(pos, size, life, color) {
+            const geo = new THREE.SphereGeometry(size);
+            const mat = new THREE.MeshBasicMaterial({ color: color || 0xffaa00, transparent: true, opacity: 0.5 });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.copy(pos);
+            scene.add(mesh);
+            // Simple visual cleanup
+            setTimeout(() => scene.remove(mesh), 200);
+        }
+
+        // --- UI Updates ---
+        function updateHUD() {
+            document.getElementById('score-display').innerText = score;
+            document.getElementById('wave-display').innerText = wave;
+            document.getElementById('hp-text').innerText = Math.ceil(player.hp);
+            document.getElementById('hp-bar').style.width = (player.hp/player.maxHp)*100 + '%';
+            
+            // Skill CD
+            const skillPct = (player.skillCd / agent.skillCd) * 100;
+            document.getElementById('cd-skill1').style.height = skillPct + '%';
+
+            // Ult
+            if (player.ultActive) {
+                const timerPct = (player.ultTimer / 600) * 100;
+                document.getElementById('cd-ult').style.height = timerPct + '%';
+                document.getElementById('cd-ult').style.backgroundColor = 'rgba(255,255,0,0.4)';
+            } else {
+                const ultPct = 100 - (ultPoints / agent.ultPoints) * 100;
+                document.getElementById('cd-ult').style.height = ultPct + '%';
+                document.getElementById('cd-ult').style.backgroundColor = 'rgba(0,0,0,0.7)';
+                
+                const readyMsg = document.getElementById('ult-ready-msg');
+                const ultBox = document.getElementById('ult-box');
+                if (ultPoints >= agent.ultPoints) {
+                    readyMsg.style.display = 'block';
+                    ultBox.style.borderColor = '#fbbf24';
+                } else {
+                    readyMsg.style.display = 'none';
+                    ultBox.style.borderColor = 'rgba(255,255,255,0.5)';
+                }
+            }
+        }
+
+        // --- Select Agent UI Logic ---
+        function selectAgent(key, el) {
+            document.querySelectorAll('.agent-card').forEach(c => c.classList.remove('selected'));
+            el.classList.add('selected');
+            document.getElementById('start-btn').disabled = false;
+            document.getElementById('start-btn').innerText = "LOCK IN";
+            document.getElementById('start-btn').onclick = () => initGame(key);
+        }
+
+        // Populate Menu
+        const menuGrid = document.getElementById('agent-grid');
+        Object.keys(AGENTS).forEach(key => {
+            const data = AGENTS[key];
+            const div = document.createElement('div');
+            div.className = 'agent-card p-4 w-48 flex flex-col items-center text-center';
+            div.onclick = () => selectAgent(key, div);
+            div.innerHTML = `
+                <div class="w-16 h-16 mb-2" style="background-color: #${data.color.toString(16)};"></div>
+                <h3 class="text-xl font-bold val-font">${data.name}</h3>
+                <div class="text-[10px] text-gray-400 val-font mb-2">${data.role}</div>
+            `;
+            menuGrid.appendChild(div);
+        });
+
+        // Start Loop
+        animate();
+
+    </script>
+</body>
+</html>
